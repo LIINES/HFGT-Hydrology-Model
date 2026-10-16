@@ -3,7 +3,10 @@
 # Author: Megan S. Harris
 # Date: May 2025
 
-using HDF5, SparseArrays, XLSX
+using HDF5, SparseArrays, XLSX, LinearAlgebra
+
+# Repository root, so the script runs from any working directory
+const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
 # Include all necessary modules
 include("0-ProcessRaw/data_processing/load_hdf5.jl")
@@ -16,7 +19,7 @@ include("0-ProcessRaw/lfes_model/initialize_lfes.jl")
 include("0-ProcessRaw/utils/convert_coo_to_csc.jl")
 include("0-ProcessRaw/utils/validate_lfes.jl")
 include("0-ProcessRaw/utils/print_system_concept.jl")
-include("../2-Visualization/plot_timeseries.jl")
+include("../2-Visualization/plot_results.jl")
 
 # Function to save incidence matrices to Excel
 function save_incidence_matrices_to_excel(incMatPlus, incMatMinus, file_name)
@@ -63,7 +66,7 @@ end
 
 # Load HDF5 file
 # file_path = "myLFES-Full-Three Lake Land System Both Operands Test-Default-Base-2.hdf5"
-file_path = "0-Data/1-IntermediateData/HDF5s/myLFES-Full-Simulation 2-Default-Base-2.hdf5"
+file_path = joinpath(REPO_ROOT, "0-Data/1-IntermediateData/HDF5s/myLFES-Full-Simulation 2-Default-Base-2.hdf5")
 hdf5_file, _ = load_hdf5(file_path)
 
 # Extract system parameters (manually defined)
@@ -75,9 +78,9 @@ parameters = Dict(
     "numProcesses" => read(hdf5_file["outputData/value/systemProcess/value/number"])["value"],
     "numCapabilities" => length(keys(read(hdf5_file["/outputData/value/systemConcept/value/name/value"])))-1,  
     "trackCapabilities" => 1,             
-    "simulationDuration" => 31449600, # 52 weeks (s)
-    "deltaT" => 604800, # one week (s)
-    "numOptTimeSteps" => 52,
+    "simulationDuration" => 31449600, # 364 days = 52 weeks (s)
+    "deltaT" => 21600, # six hours (s); see README on time-step choice
+    "numOptTimeSteps" => 1456,   # 52 weeks of 6-hour steps
     "hasOperandNet" => 0,
     "hasDeviceModels" => 1,
     "tol" => 0.001
@@ -143,13 +146,14 @@ println("LFES Model Ready!")
 # ========================
 should_print_system_concept = false  # Set this to `true` or `false` when needed
 should_save_incidence_matrices = true  # Set this to `true` or `false` when needed
-incidence_matrices_filename = "0-Data/0-RawData/IncidenceTensors/simulation3_incidence_matrices.xlsx"  # Change this to specify a different filename
+incidence_matrices_filename = joinpath(REPO_ROOT, "0-Data/1-IntermediateData/IncidenceTensors/simulation2_incidence_matrices.xlsx")  # Change this to specify a different filename
 
 if should_print_system_concept
     print_system_concept(hdf5_file)
 end
 
 if should_save_incidence_matrices
+    mkpath(dirname(incidence_matrices_filename))
     save_incidence_matrices_to_excel(
         incMatMatrices["incMatPlus"], 
         incMatMatrices["incMatMinus"], 
@@ -157,8 +161,8 @@ if should_save_incidence_matrices
     )
 end
 
-include("../1-SimulateDiscrete/simulateDiscreteHFGT.jl")
-time = 0:1:myLFES.numOptTimeSteps # in weeks
+include("1-SimulateDiscrete/simulateDiscreteHFGT.jl")
+time = collect(0:myLFES.numOptTimeSteps) .* (myLFES.deltaT / 604800) # in weeks
 water_buffers = QB[1:myLFES.numBuffers,:]
 nitrogen_buffers = QB[(myLFES.numBuffers+1):2*myLFES.numBuffers,:]
 concentration_buffers = nitrogen_buffers./water_buffers
@@ -167,11 +171,15 @@ lake_concentrations = concentration_buffers[1:3,:]
 names_buffers = ["Lake 1","Lake 2","Lake 3",
                 "Point 1", "Point 2"]
 names_lakes = ["Lake 1", "Lake 2", "Lake 3"]
-concentration_plot = plot_buffer_timeseries(lake_concentrations, time, names_lakes,
-                                "Time (weeks)",
-                                 "Concentration (mg/L)",
-                                 "Simulation 2: Lake Concentration Over Time",
-                                 "0-Data/2-FinalData/LakeConcentrations/sim2_lakeconc",
-                                 colors=["#4363d8", "#3cb44b","#f58231"],
-                                markers=[:circle,:square,:diamond])
-display(concentration_plot)
+lake_idx   = 1:3                                     # Lakes 1-3 come first in QB
+lake_depth = QB[lake_idx, :] ./ myLFES.area[lake_idx]
+
+# Water balance: net input = change in storage of all buffers (outflow ends in Point 2)
+nb = myLFES.numBuffers
+water_caps = [c for c in findall(!iszero, diag(myLFES.DUMinus)) if findfirst(==(1), myLFES.incMatPlus[:, c]) <= nb]
+water_in   = sum(myLFES.CUMinus[water_caps, :]) * myLFES.deltaT
+println("Water delivered to Point 2 / net water input = ", round((QB[nb, end] - QB[nb, 1]) / water_in, digits=3))
+
+fig2 = plot_network(time, lake_depth, lake_concentrations,
+                    joinpath(REPO_ROOT, "0-Data/2-FinalData/LakeConcentrations/sim2_results"))
+display(fig2)

@@ -11,6 +11,10 @@ function define_process_parameters(process_keys, hdf5_file)
     
     resource_types = ["transformationResource", "independentBuffer", "transportationResource"]
 
+    # The toolbox writes an empty process list (e.g. for a resource type with no
+    # resources) as an HDF5 dataset rather than a group; treat it as empty.
+    is_group(x) = x isa HDF5.Group
+
     function sort_numeric_indices(keys)
         return sort(
             filter(x -> x != "dims", collect(keys)),
@@ -50,27 +54,27 @@ function define_process_parameters(process_keys, hdf5_file)
             resource_numbers = Set{String}()
             
             # Check transform process
-            if haskey(resource_type_path, "transformProcess")
+            if haskey(resource_type_path, "transformProcess") && is_group(resource_type_path["transformProcess"]["value"])
                 transform_path = resource_type_path["transformProcess"]["value"]
                 union!(resource_numbers, sort_numeric_indices(keys(transform_path)))
             end
             
             # Check transport process
-            if haskey(resource_type_path, "transportProcess")
+            if haskey(resource_type_path, "transportProcess") && is_group(resource_type_path["transportProcess"]["value"])
                 transport_path = resource_type_path["transportProcess"]["value"]
                 union!(resource_numbers, sort_numeric_indices(keys(transport_path)))
             end
             
-            # Sort all resource numbers
-            resource_numbers = sort(collect(resource_numbers))
+            # Sort all resource numbers numerically ("_10" after "_9")
+            resource_numbers = sort(collect(resource_numbers), by = x -> parse(Int, x[2:end]))
             
             # Process each resource number
             for res_num in resource_numbers
                 # First process transform process if it exists
-                if haskey(resource_type_path, "transformProcess")
+                if haskey(resource_type_path, "transformProcess") && is_group(resource_type_path["transformProcess"]["value"])
                     transform_path = resource_type_path["transformProcess"]["value"]
                     
-                    if haskey(transform_path, res_num) && haskey(transform_path[res_num], "value")
+                    if haskey(transform_path, res_num) && haskey(transform_path[res_num], "value") && is_group(transform_path[res_num]["value"])
                         process_path = transform_path[res_num]["value"]
                         
                         if haskey(process_path, key)
@@ -85,10 +89,10 @@ function define_process_parameters(process_keys, hdf5_file)
                 end
 
                 # Then process transport process if it exists
-                if haskey(resource_type_path, "transportProcess")
+                if haskey(resource_type_path, "transportProcess") && is_group(resource_type_path["transportProcess"]["value"])
                     transport_path = resource_type_path["transportProcess"]["value"]
                     
-                    if haskey(transport_path, res_num) && haskey(transport_path[res_num], "value")
+                    if haskey(transport_path, res_num) && haskey(transport_path[res_num], "value") && is_group(transport_path[res_num]["value"])
                         process_path = transport_path[res_num]["value"]
                         
                         if haskey(process_path, key)
